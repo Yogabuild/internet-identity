@@ -932,7 +932,7 @@ export type OpenIdCredentialAddError = {
   { 'JwtExpired' : null } |
   { 'Unauthorized' : Principal } |
   { 'JwtVerificationFailed' : null };
-export type OpenIdCredentialKey = [Iss, Sub];
+export type OpenIdCredentialKey = [Iss, Sub, Aud];
 export type OpenIdCredentialRemoveError = { 'InternalCanisterError' : string } |
   { 'OpenIdCredentialNotFound' : null } |
   { 'Unauthorized' : Principal };
