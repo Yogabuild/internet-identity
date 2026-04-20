@@ -280,6 +280,9 @@ type InternetIdentityInit = record {
     new_flow_origins : opt vec text;
     // Configurations for OpenID clients
     openid_configs : opt vec OpenIdConfig;
+    // Deprecated in init args: use add_discoverable_oidc_config update call instead.
+    // Kept for backward compatibility and config() query output.
+    oidc_configs : opt vec DiscoverableOidcConfig;
     // Configuration for Web Analytics
     analytics_config : opt opt AnalyticsConfig;
     // Configuration to show dapps explorer or not
@@ -381,6 +384,23 @@ type OpenIdConfig = record {
     auth_scope : vec text;
     fedcm_uri : opt text;
     email_verification : opt OpenIdEmailVerification;
+};
+
+// SSO provider config that uses two-hop discovery.
+// The backend fetches https://{discovery_domain}/.well-known/ii-openid-configuration
+// for { client_id, openid_configuration } and then fetches the standard OIDC
+// discovery at openid_configuration for { issuer, jwks_uri }.
+type DiscoverableOidcConfig = record {
+    discovery_domain : text;
+};
+
+// Resolved SSO provider state.
+// All fields other than discovery_domain are None until discovery completes.
+type OidcConfig = record {
+    discovery_domain : text;
+    client_id : opt text;
+    openid_configuration : opt text;
+    issuer : opt text;
 };
 
 type OpenIdCredentialKey = record { Iss; Sub };
@@ -1174,6 +1194,11 @@ service : (opt InternetIdentityInit) -> {
     // HTTP Gateway protocol
     // =====================
     http_request : (request : HttpRequest) -> (HttpResponse) query;
+
+    // OIDC Discovery
+    // ===============
+    discovered_oidc_configs : () -> (vec OidcConfig) query;
+    add_discoverable_oidc_config : (DiscoverableOidcConfig) -> ();
 
     // Internal Methods
     // ================

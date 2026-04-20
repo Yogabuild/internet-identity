@@ -12,8 +12,9 @@ use internet_identity_interface::internet_identity::types::openid::{
     OpenIdCredentialAddError, OpenIdDelegationError,
 };
 use internet_identity_interface::internet_identity::types::{
-    AnchorNumber, Delegation, IdRegFinishError, MetadataEntryV2, OpenIdConfig,
-    OpenIdEmailVerificationScheme, PublicKey, SessionKey, SignedDelegation, Timestamp, UserKey,
+    AnchorNumber, Delegation, DiscoverableOidcConfig, IdRegFinishError, MetadataEntryV2,
+    OidcConfig, OpenIdConfig, OpenIdEmailVerificationScheme, PublicKey, SessionKey,
+    SignedDelegation, Timestamp, UserKey,
 };
 use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
@@ -149,7 +150,14 @@ impl OpenIdCredential {
             providers
                 .iter()
                 .find(|provider| {
-                    let issuer_placeholders = get_issuer_placeholders(&provider.issuer());
+                    // Skip providers whose discovery is still pending.
+                    let Some(template) = provider.issuer() else {
+                        return false;
+                    };
+                    let Some(provider_aud) = provider.client_id() else {
+                        return false;
+                    };
+                    let issuer_placeholders = get_issuer_placeholders(&template);
                     let mut issuer_claims: Vec<(String, String)> = vec![];
                     for key in issuer_placeholders {
                         if let Some(MetadataEntryV2::String(value)) = self.metadata.get(&key) {
@@ -158,9 +166,8 @@ impl OpenIdCredential {
                             return false;
                         }
                     }
-                    let effective_issuer =
-                        replace_issuer_placeholders(&provider.issuer(), &issuer_claims);
-                    effective_issuer == self.iss
+                    let effective_issuer = replace_issuer_placeholders(&template, &issuer_claims);
+                    effective_issuer == self.iss && provider_aud == self.aud
                 })
                 .and_then(|provider| f(provider.as_ref()))
         })
@@ -168,7 +175,7 @@ impl OpenIdCredential {
 
     /// Find current config for stored credential
     pub fn config_issuer(&self) -> Option<String> {
-        self.with_provider(|provider| Some(provider.issuer()))
+        self.with_provider(|provider| provider.issuer())
     }
 
     fn read_attribute_as_string(&self, attribute_name: &str) -> Option<String> {
@@ -231,7 +238,14 @@ impl OpenIdCredential {
 }
 
 pub trait OpenIdProvider {
-    fn issuer(&self) -> String;
+    /// Issuer template for this provider. `None` means discovery is still pending —
+    /// matching and verification skip such providers. May contain placeholders like
+    /// `{tid}` that are filled from JWT claims before comparison.
+    fn issuer(&self) -> Option<String>;
+
+    /// Client id (the expected JWT `aud`) for this provider. `None` means discovery
+    /// is still pending.
+    fn client_id(&self) -> Option<String>;
 
     fn email_verification_scheme(&self) -> Option<OpenIdEmailVerificationScheme>;
 
@@ -251,10 +265,40 @@ pub trait OpenIdProvider {
 #[derive(Deserialize)]
 struct PartialClaims {
     iss: String,
+    aud: AudClaim,
+}
+
+/// JWT `aud` claim — per RFC 7519 may be a single string or an array of strings
+/// (Microsoft sometimes ships it as an array). Matching treats an array as a
+/// set: any element equal to the provider's configured client id is accepted.
+#[derive(Deserialize, Clone)]
+#[serde(untagged)]
+pub(super) enum AudClaim {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl AudClaim {
+    /// Returns `true` if `expected` is the single value or contained in the array.
+    pub(super) fn matches(&self, expected: &str) -> bool {
+        match self {
+            AudClaim::Single(s) => s == expected,
+            AudClaim::Multiple(v) => v.iter().any(|s| s == expected),
+        }
+    }
+
+    /// Returns `true` if the claim carries no audience at all.
+    pub(super) fn is_empty(&self) -> bool {
+        match self {
+            AudClaim::Single(s) => s.is_empty(),
+            AudClaim::Multiple(v) => v.is_empty(),
+        }
+    }
 }
 
 thread_local! {
     static PROVIDERS: RefCell<Vec<Box<dyn OpenIdProvider >>> = RefCell::new(vec![]);
+    static OIDC_CONFIGS: RefCell<Vec<DiscoverableOidcConfig>> = const { RefCell::new(vec![]) };
 }
 
 pub fn setup(configs: Vec<OpenIdConfig>) {
@@ -263,6 +307,71 @@ pub fn setup(configs: Vec<OpenIdConfig>) {
             providers.push(Box::new(generic::Provider::create(config)));
         }
     });
+}
+
+pub fn setup_oidc(configs: Vec<DiscoverableOidcConfig>) {
+    for config in configs {
+        add_oidc_config_internal(config);
+    }
+    #[cfg(not(test))]
+    generic::init_discovery_timers();
+}
+
+pub fn add_oidc_config(config: DiscoverableOidcConfig) {
+    if !generic::is_allowed_discovery_domain(&config.discovery_domain) {
+        ic_cdk::trap(&format!(
+            "discovery_domain '{}' is not on the canary allowlist",
+            config.discovery_domain
+        ));
+    }
+
+    // Skip if already registered
+    let already_exists = OIDC_CONFIGS.with_borrow(|stored| {
+        stored
+            .iter()
+            .any(|c| c.discovery_domain == config.discovery_domain)
+    });
+    if already_exists {
+        return;
+    }
+
+    add_oidc_config_internal(config.clone());
+
+    // Persist to state so it survives upgrades
+    state::persistent_state_mut(|persistent_state| {
+        let configs = persistent_state.oidc_configs.get_or_insert_with(Vec::new);
+        configs.push(config);
+    });
+
+    #[cfg(not(test))]
+    generic::init_discovery_timers();
+}
+
+fn add_oidc_config_internal(config: DiscoverableOidcConfig) {
+    OIDC_CONFIGS.with_borrow_mut(|stored| {
+        stored.push(config.clone());
+    });
+    PROVIDERS.with_borrow_mut(|providers| {
+        providers.push(Box::new(generic::DiscoverableProvider::create(config)));
+    });
+}
+
+pub fn get_discovered_oidc_configs() -> Vec<OidcConfig> {
+    OIDC_CONFIGS.with_borrow(|configs| {
+        configs
+            .iter()
+            .map(|config| {
+                let (client_id, openid_configuration, issuer) =
+                    generic::discovered_state_for(&config.discovery_domain);
+                OidcConfig {
+                    discovery_domain: config.discovery_domain.clone(),
+                    client_id,
+                    openid_configuration,
+                    issuer,
+                }
+            })
+            .collect()
+    })
 }
 
 pub fn with_provider<F, R>(jwt: &str, callback: F) -> Result<R, OpenIDJWTVerificationError>
@@ -275,22 +384,46 @@ where
             OpenIDJWTVerificationError::GenericError("Failed to decode JWT".to_string())
         })?;
 
-    let PartialClaims { iss } = serde_json::from_slice(validation_item.claims()).map_err(|_| {
-        OpenIDJWTVerificationError::GenericError("Unable to decode claims".to_string())
-    })?;
+    let PartialClaims { iss, aud } =
+        serde_json::from_slice(validation_item.claims()).map_err(|_| {
+            OpenIDJWTVerificationError::GenericError("Unable to decode claims".to_string())
+        })?;
+    if aud.is_empty() {
+        return Err(OpenIDJWTVerificationError::GenericError(
+            "JWT has empty aud claim".to_string(),
+        ));
+    }
 
     PROVIDERS.with_borrow(|providers| {
         providers
             .iter()
             .find(|provider| {
-                let issuer_placeholders = get_issuer_placeholders(&provider.issuer());
+                // Skip providers whose discovery is still pending.
+                let Some(template) = provider.issuer() else {
+                    return false;
+                };
+                let Some(provider_aud) = provider.client_id() else {
+                    return false;
+                };
+                let issuer_placeholders = get_issuer_placeholders(&template);
                 let issuer_claims = get_all_claims(validation_item.claims(), issuer_placeholders);
-                let effective_issuer =
-                    replace_issuer_placeholders(&provider.issuer(), &issuer_claims);
-                effective_issuer == iss
+                let effective_issuer = replace_issuer_placeholders(&template, &issuer_claims);
+                effective_issuer == iss && aud.matches(&provider_aud)
             })
             .ok_or_else(|| {
-                OpenIDJWTVerificationError::GenericError(format!("Unsupported issuer: {}", iss))
+                // If any provider is still waiting on discovery, surface a "pending" error
+                // rather than the generic "unsupported issuer" so the frontend can retry.
+                let has_pending = providers
+                    .iter()
+                    .any(|p| p.issuer().is_none() || p.client_id().is_none());
+                if has_pending {
+                    OpenIDJWTVerificationError::GenericError(
+                        "OIDC provider discovery is still in progress, please try again shortly"
+                            .to_string(),
+                    )
+                } else {
+                    OpenIDJWTVerificationError::GenericError(format!("Unsupported issuer: {}", iss))
+                }
             })
             .and_then(|provider| callback(provider.as_ref()))
     })
@@ -394,12 +527,29 @@ fn salt() -> [u8; 32] {
 }
 
 #[cfg(test)]
-struct ExampleProvider;
+struct ExampleProvider {
+    issuer: Option<String>,
+    client_id: Option<String>,
+}
+
+#[cfg(test)]
+impl Default for ExampleProvider {
+    fn default() -> Self {
+        Self {
+            issuer: Some("https://example.com".into()),
+            client_id: Some("example-aud".into()),
+        }
+    }
+}
 
 #[cfg(test)]
 impl OpenIdProvider for ExampleProvider {
-    fn issuer(&self) -> String {
-        "https://example.com".into()
+    fn issuer(&self) -> Option<String> {
+        self.issuer.clone()
+    }
+
+    fn client_id(&self) -> Option<String> {
+        self.client_id.clone()
     }
 
     fn email_verification_scheme(&self) -> Option<OpenIdEmailVerificationScheme> {
@@ -419,24 +569,34 @@ impl OpenIdProvider for ExampleProvider {
 impl ExampleProvider {
     fn credential(&self) -> OpenIdCredential {
         OpenIdCredential {
-            iss: self.issuer(),
+            iss: self
+                .issuer
+                .clone()
+                .unwrap_or_else(|| "https://example.com".into()),
             sub: "example-sub".into(),
-            aud: "example-aud".into(),
+            aud: self
+                .client_id
+                .clone()
+                .unwrap_or_else(|| "example-aud".into()),
             last_usage_timestamp: None,
             metadata: HashMap::new(),
         }
     }
 }
 
+// Example JWT with {"iss":"https://example.com","aud":"example-aud"}.
+#[cfg(test)]
+const EXAMPLE_JWT: &str = "eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tIiwiYXVkIjoiZXhhbXBsZS1hdWQifQ.SBeD7pV65F98wStsBuC_VRn-yjLoyf6iojJl9Y__wN0";
+
 #[test]
 fn should_return_credential() {
-    let provider = ExampleProvider {};
+    let provider = ExampleProvider::default();
     let credential = provider.credential();
     PROVIDERS.replace(vec![Box::new(provider)]);
-    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tIn0.SBeD7pV65F98wStsBuC_VRn-yjLoyf6iojJl9Y__wN0";
 
     assert_eq!(
-        with_provider(jwt, |provider| provider.verify(jwt, &[0u8; 32])),
+        with_provider(EXAMPLE_JWT, |provider| provider
+            .verify(EXAMPLE_JWT, &[0u8; 32])),
         Ok(credential)
     );
 }
@@ -444,14 +604,55 @@ fn should_return_credential() {
 #[test]
 fn should_return_error_unsupported_issuer() {
     PROVIDERS.replace(vec![]);
-    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tIn0.SBeD7pV65F98wStsBuC_VRn-yjLoyf6iojJl9Y__wN0";
 
     assert_eq!(
-        with_provider(jwt, |provider| provider.verify(jwt, &[0u8; 32])),
+        with_provider(EXAMPLE_JWT, |provider| provider
+            .verify(EXAMPLE_JWT, &[0u8; 32])),
         Err(OpenIDJWTVerificationError::GenericError(
             "Unsupported issuer: https://example.com".to_string()
         ))
     );
+}
+
+#[test]
+fn should_skip_provider_when_discovery_pending() {
+    // Provider with no discovered issuer/client_id — must be skipped and the
+    // surface error should be the "discovery in progress" message.
+    let pending = ExampleProvider {
+        issuer: None,
+        client_id: None,
+    };
+    PROVIDERS.replace(vec![Box::new(pending)]);
+
+    assert_eq!(
+        with_provider(EXAMPLE_JWT, |provider| provider
+            .verify(EXAMPLE_JWT, &[0u8; 32])),
+        Err(OpenIDJWTVerificationError::GenericError(
+            "OIDC provider discovery is still in progress, please try again shortly".to_string()
+        ))
+    );
+}
+
+#[test]
+fn should_disambiguate_providers_by_aud() {
+    // Two providers sharing the same iss but different aud — only the one whose
+    // client_id matches the JWT's aud claim should verify.
+    let matching = ExampleProvider {
+        issuer: Some("https://example.com".into()),
+        client_id: Some("example-aud".into()),
+    };
+    let expected = matching.credential();
+    let other = ExampleProvider {
+        issuer: Some("https://example.com".into()),
+        client_id: Some("other-aud".into()),
+    };
+    PROVIDERS.replace(vec![Box::new(other), Box::new(matching)]);
+
+    let returned = with_provider(EXAMPLE_JWT, |provider| {
+        provider.verify(EXAMPLE_JWT, &[0u8; 32])
+    })
+    .expect("expected matching provider");
+    assert_eq!(returned.aud, expected.aud);
 }
 
 #[test]
@@ -600,8 +801,12 @@ struct ExamplePlaceholderProvider;
 
 #[cfg(test)]
 impl OpenIdProvider for ExamplePlaceholderProvider {
-    fn issuer(&self) -> String {
-        "https://login.microsoftonline.com/{tid}/v2.0".into()
+    fn issuer(&self) -> Option<String> {
+        Some("https://login.microsoftonline.com/{tid}/v2.0".into())
+    }
+
+    fn client_id(&self) -> Option<String> {
+        Some("example-aud".into())
     }
 
     fn email_verification_scheme(&self) -> Option<OpenIdEmailVerificationScheme> {
@@ -636,22 +841,22 @@ impl ExamplePlaceholderProvider {
 
 #[test]
 fn find_config_issuer_from_credential() {
-    let provider = ExampleProvider {};
+    let provider = ExampleProvider::default();
     let placeholder_provider = ExamplePlaceholderProvider {};
     let config_issuer = provider.issuer();
     let placeholder_config_issuer = placeholder_provider.issuer();
     PROVIDERS.replace(vec![Box::new(provider), Box::new(placeholder_provider)]);
 
     assert_eq!(
-        ExampleProvider.credential().config_issuer(),
-        Some(config_issuer)
+        ExampleProvider::default().credential().config_issuer(),
+        config_issuer
     );
     assert_eq!(
         ExamplePlaceholderProvider.credential().config_issuer(),
-        Some(placeholder_config_issuer)
+        placeholder_config_issuer
     );
 
-    let mut unknown_credential = ExampleProvider.credential();
+    let mut unknown_credential = ExampleProvider::default().credential();
     unknown_credential.iss = "https://example.com/unknown".to_string();
     assert_eq!(unknown_credential.config_issuer(), None);
 }

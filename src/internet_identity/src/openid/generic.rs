@@ -1,5 +1,5 @@
 use super::{
-    get_all_claims, get_issuer_placeholders, replace_issuer_placeholders,
+    get_all_claims, get_issuer_placeholders, replace_issuer_placeholders, AudClaim,
     OpenIDJWTVerificationError,
 };
 use crate::openid::OpenIdCredential;
@@ -19,7 +19,7 @@ use identity_jose::jws::{
     VerificationInput,
 };
 use internet_identity_interface::internet_identity::types::{
-    MetadataEntryV2, OpenIdConfig, OpenIdEmailVerificationScheme,
+    DiscoverableOidcConfig, MetadataEntryV2, OpenIdConfig, OpenIdEmailVerificationScheme,
 };
 use rsa::{Pkcs1v15Sign, RsaPublicKey};
 use serde::Serialize;
@@ -35,11 +35,20 @@ use std::rc::Rc;
 #[cfg(not(test))]
 const CERTS_CALL_CYCLES: u128 = 30_000_000_000;
 
+#[cfg(not(test))]
+const DISCOVERY_CALL_CYCLES: u128 = 30_000_000_000;
+
 const HTTP_STATUS_OK: u8 = 200;
 
 // Fetch the certs every fifteen minutes, the responses are always
 // valid for a couple of hours so that should be enough margin.
 const FETCH_CERTS_INTERVAL_SECONDS: u64 = 60 * 15; // 15 minutes in seconds
+
+/// Re-fetch OIDC discovery documents every hour. Discovery metadata (issuer, jwks_uri)
+/// changes infrequently (typically only on provider-side reconfigurations), but hourly
+/// refresh keeps II responsive to such changes within a bounded window.
+#[cfg(not(test))]
+const FETCH_DISCOVERY_INTERVAL_SECONDS: u64 = 60 * 60; // 1 hour
 
 // A JWT is only valid for a very small window, even if the JWT itself says it's valid for longer,
 // we only need it right after it's being issued to create a JWT delegation with its own expiry.
@@ -89,7 +98,7 @@ impl EmailVerifiedClaim {
 struct Claims {
     iss: String,
     sub: String,
-    aud: String,
+    aud: AudClaim,
     nonce: String,
     exp: u64,
     iat: u64,
@@ -107,8 +116,12 @@ pub struct Provider {
 }
 
 impl OpenIdProvider for Provider {
-    fn issuer(&self) -> String {
-        self.issuer.clone()
+    fn issuer(&self) -> Option<String> {
+        Some(self.issuer.clone())
+    }
+
+    fn client_id(&self) -> Option<String> {
+        Some(self.client_id.clone())
     }
 
     fn email_verification_scheme(&self) -> Option<OpenIdEmailVerificationScheme> {
@@ -133,7 +146,7 @@ impl OpenIdProvider for Provider {
         })?;
 
         // Calculate effective issuer and use it to verify the JWT claims
-        let issuer_placeholders = get_issuer_placeholders(&self.issuer());
+        let issuer_placeholders = get_issuer_placeholders(&self.issuer);
         let issuer_claims = get_all_claims(validation_item.claims(), issuer_placeholders);
         let effective_issuer = replace_issuer_placeholders(&self.issuer, &issuer_claims);
         verify_claims(&effective_issuer, &self.client_id, &claims, salt)?;
@@ -188,7 +201,8 @@ impl OpenIdProvider for Provider {
             // https://login.microsoftonline.com/599249e6-791a-48a7-84d0-b3e858773ac2/v2.0
             iss: claims.iss,
             sub: claims.sub,
-            aud: claims.aud,
+            // `aud` is verified against `client_id` above; store the canonical value.
+            aud: self.client_id.clone(),
             last_usage_timestamp: None,
             metadata,
         })
@@ -213,6 +227,437 @@ impl Provider {
             email_verification: config.email_verification,
         }
     }
+}
+
+/// CANARY: SSO via two-hop discovery is a proof-of-concept. Only this domain is
+/// accepted as a `discovery_domain` for now. Widen this list (or move it to
+/// canister config) once the feature exits canary.
+pub const ALLOWED_DISCOVERY_DOMAINS: &[&str] = &["dfinity.org"];
+
+pub fn is_allowed_discovery_domain(domain: &str) -> bool {
+    ALLOWED_DISCOVERY_DOMAINS
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(domain))
+}
+
+/// SSO provider that resolves its configuration via two-hop discovery.
+/// Used with the `DiscoverableOidcConfig` type.
+pub struct DiscoverableProvider {
+    discovered_client_id: Rc<RefCell<Option<String>>>,
+    discovered_issuer: Rc<RefCell<Option<String>>>,
+    certs: Rc<RefCell<Vec<Jwk>>>,
+}
+
+impl OpenIdProvider for DiscoverableProvider {
+    fn issuer(&self) -> Option<String> {
+        self.discovered_issuer.borrow().clone()
+    }
+
+    fn client_id(&self) -> Option<String> {
+        self.discovered_client_id.borrow().clone()
+    }
+
+    fn email_verification_scheme(&self) -> Option<OpenIdEmailVerificationScheme> {
+        // SSO providers don't opt into II's hardcoded provider-specific email
+        // verification heuristics (Google `email_verified`, Microsoft `tid`).
+        // Verification is a trust decision made when the SSO domain is configured.
+        None
+    }
+
+    fn verify(
+        &self,
+        jwt: &str,
+        salt: &[u8; 32],
+    ) -> Result<OpenIdCredential, OpenIDJWTVerificationError> {
+        let issuer = self.discovered_issuer.borrow().clone().ok_or_else(|| {
+            OpenIDJWTVerificationError::GenericError(
+                "Provider not yet initialized (discovery pending)".to_string(),
+            )
+        })?;
+        let client_id = self.discovered_client_id.borrow().clone().ok_or_else(|| {
+            OpenIDJWTVerificationError::GenericError(
+                "Provider client_id not yet available (discovery pending)".to_string(),
+            )
+        })?;
+
+        // Decode JWT and decode claims
+        let validation_item = Decoder::new()
+            .decode_compact_serialization(jwt.as_bytes(), None)
+            .map_err(|_| {
+                OpenIDJWTVerificationError::GenericError("Unable to decode JWT".to_string())
+            })?;
+        let claims: Claims = serde_json::from_slice(validation_item.claims()).map_err(|_| {
+            OpenIDJWTVerificationError::GenericError(
+                "Unable to decode claims or expected claims are missing".to_string(),
+            )
+        })?;
+
+        // Verify claims against discovered issuer
+        verify_claims(&issuer, &client_id, &claims, salt)?;
+
+        // Verify JWT signature
+        let kid = validation_item
+            .kid()
+            .ok_or(OpenIDJWTVerificationError::GenericError(
+                "JWT is missing kid".to_string(),
+            ))?;
+        let certs = self.certs.borrow();
+        if certs.is_empty() {
+            // Distinguish a still-pending JWKS fetch from a genuine kid mismatch so
+            // the frontend can offer a retry instead of surfacing a fatal error.
+            return Err(OpenIDJWTVerificationError::GenericError(
+                "OIDC provider JWKS not yet fetched, please try again shortly".to_string(),
+            ));
+        }
+        let cert = certs
+            .iter()
+            .find(|cert| cert.kid().is_some_and(|v| v == kid))
+            .ok_or(OpenIDJWTVerificationError::GenericError(format!(
+                "Certificate not found for {kid}"
+            )))?;
+        validation_item
+            .verify(&JwsVerifierFn::from(verify_signature), cert)
+            .map_err(|_| {
+                OpenIDJWTVerificationError::GenericError("Invalid signature".to_string())
+            })?;
+
+        // Return credential with metadata
+        let mut metadata: HashMap<String, MetadataEntryV2> = HashMap::new();
+        if let Some(email) = claims.email {
+            metadata.insert("email".into(), MetadataEntryV2::String(email));
+        }
+        if let Some(email_verified) = claims.email_verified {
+            metadata.insert(
+                "email_verified".into(),
+                MetadataEntryV2::String(email_verified.into_string()),
+            );
+        }
+        if let Some(name) = claims.name {
+            metadata.insert("name".into(), MetadataEntryV2::String(name));
+        }
+        Ok(OpenIdCredential {
+            iss: claims.iss,
+            sub: claims.sub,
+            // `aud` is verified against `client_id` above; store the canonical value.
+            aud: client_id,
+            last_usage_timestamp: None,
+            metadata,
+        })
+    }
+}
+
+/// Shared state for a single discovery task, exchanged between the periodic
+/// timer and the owning `DiscoverableProvider`.
+#[derive(Clone)]
+pub struct DiscoveryState {
+    pub discovery_domain: String,
+    pub client_id_ref: Rc<RefCell<Option<String>>>,
+    pub openid_configuration_ref: Rc<RefCell<Option<String>>>,
+    pub issuer_ref: Rc<RefCell<Option<String>>>,
+    /// Only read by the periodic discovery timer (non-test builds).
+    #[allow(dead_code)]
+    pub certs_ref: Rc<RefCell<Vec<Jwk>>>,
+    /// Tracks the last seen `jwks_uri` so cert fetching restarts when it changes.
+    /// Only read by the periodic discovery timer (non-test builds).
+    #[allow(dead_code)]
+    pub last_jwks_uri: Rc<RefCell<Option<String>>>,
+}
+
+// TODO: `DISCOVERY_TASKS` is unbounded — a long `ALLOWED_DISCOVERY_DOMAINS` list
+// or many admin-configured SSO providers would fan out into many periodic HTTP
+// outcalls. Revisit once the canary allowlist is lifted. See reviewer comment on
+// https://github.com/dfinity/internet-identity/pull/3778#discussion_r3099150266.
+thread_local! {
+    static DISCOVERY_TASKS: RefCell<Vec<DiscoveryState>> = const { RefCell::new(vec![]) };
+}
+
+impl DiscoverableProvider {
+    pub fn create(config: DiscoverableOidcConfig) -> DiscoverableProvider {
+        let certs: Rc<RefCell<Vec<Jwk>>> = Rc::new(RefCell::new(vec![]));
+        let discovered_issuer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let discovered_client_id: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let openid_configuration: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+        DISCOVERY_TASKS.with_borrow_mut(|tasks| {
+            tasks.push(DiscoveryState {
+                discovery_domain: config.discovery_domain.clone(),
+                client_id_ref: Rc::clone(&discovered_client_id),
+                openid_configuration_ref: Rc::clone(&openid_configuration),
+                issuer_ref: Rc::clone(&discovered_issuer),
+                certs_ref: Rc::clone(&certs),
+                last_jwks_uri: Rc::new(RefCell::new(None)),
+            });
+        });
+
+        DiscoverableProvider {
+            discovered_client_id,
+            discovered_issuer,
+            certs,
+        }
+    }
+}
+
+/// Initializes timers for OIDC discovery. Called once from `initialize()`.
+/// Uses `set_timer_interval` for periodic refresh and an immediate first fetch.
+#[cfg(not(test))]
+pub fn init_discovery_timers() {
+    use ic_cdk::spawn;
+    use ic_cdk_timers::{set_timer, set_timer_interval};
+    use std::time::Duration;
+
+    // Immediate first fetch
+    set_timer(Duration::ZERO, || spawn(run_discovery_tasks()));
+
+    // Periodic refresh
+    set_timer_interval(
+        Duration::from_secs(FETCH_DISCOVERY_INTERVAL_SECONDS),
+        || spawn(run_discovery_tasks()),
+    );
+}
+
+#[cfg(not(test))]
+async fn run_discovery_tasks() {
+    let tasks: Vec<DiscoveryState> = DISCOVERY_TASKS.with_borrow(|tasks| tasks.clone());
+
+    for task in tasks {
+        // Hop 1: fetch https://{domain}/.well-known/ii-openid-configuration,
+        // which is expected to return { client_id, openid_configuration }.
+        let hop1_url = format!(
+            "https://{}/.well-known/ii-openid-configuration",
+            task.discovery_domain
+        );
+        let ii_config = match fetch_ii_openid_configuration(hop1_url.clone()).await {
+            Ok(c) => c,
+            Err(err) => {
+                ic_cdk::println!("II OpenID configuration fetch failed for {hop1_url}: {err}");
+                continue;
+            }
+        };
+        if !ii_config.openid_configuration.starts_with("https://") {
+            ic_cdk::println!(
+                "II OpenID configuration from {hop1_url} has non-https openid_configuration URL"
+            );
+            continue;
+        }
+
+        // Hop 2: fetch the standard OIDC discovery document at openid_configuration.
+        let doc = match fetch_discovery(ii_config.openid_configuration.clone()).await {
+            Ok(d) => d,
+            Err(err) => {
+                ic_cdk::println!(
+                    "OIDC discovery fetch failed for {}: {err}",
+                    ii_config.openid_configuration
+                );
+                continue;
+            }
+        };
+
+        // Verify that the discovered issuer's host matches the openid_configuration URL host.
+        // This is the standard OIDC-discovery self-assertion check and defends against a
+        // compromised hop-1 response that declares an unrelated issuer for its jwks_uri.
+        if let Err(err) = validate_issuer_host(&ii_config.openid_configuration, &doc.issuer) {
+            ic_cdk::println!("Discovery issuer validation failed: {err}");
+            continue;
+        }
+
+        // Reject malformed / non-HTTPS jwks_uri before scheduling repeated outcalls.
+        if let Err(err) = validate_https_url(&doc.jwks_uri) {
+            ic_cdk::println!(
+                "Invalid jwks_uri from {}: {err}",
+                ii_config.openid_configuration
+            );
+            continue;
+        }
+
+        task.client_id_ref.replace(Some(ii_config.client_id));
+        task.openid_configuration_ref
+            .replace(Some(ii_config.openid_configuration));
+        task.issuer_ref.replace(Some(doc.issuer));
+
+        // Start or restart cert fetching when jwks_uri changes
+        let jwks_changed = {
+            let last = task.last_jwks_uri.borrow();
+            last.as_deref() != Some(&doc.jwks_uri)
+        };
+        if jwks_changed {
+            task.last_jwks_uri.replace(Some(doc.jwks_uri.clone()));
+            schedule_fetch_certs(doc.jwks_uri, Rc::clone(&task.certs_ref), Some(0));
+        }
+    }
+}
+
+/// Ensure a URL is syntactically valid and uses `https://`.
+#[cfg(not(test))]
+fn validate_https_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("parse error: {e}"))?;
+    if parsed.scheme() != "https" {
+        return Err(format!("expected https scheme, got '{}'", parsed.scheme()));
+    }
+    Ok(())
+}
+
+/// Validates that the discovered `issuer` belongs to the same host as the
+/// OpenID configuration URL (hop 2). The `discovery_domain` (hop 1) is
+/// intentionally allowed to differ — it hosts a custom SSO indirection that
+/// legitimately points at an external OIDC provider.
+#[cfg(not(test))]
+fn validate_issuer_host(openid_config_url: &str, issuer: &str) -> Result<(), String> {
+    let openid_config_host = url::Url::parse(openid_config_url)
+        .map_err(|e| format!("Invalid openid_configuration URL: {e}"))?
+        .host_str()
+        .ok_or_else(|| format!("No host in openid_configuration URL: {openid_config_url}"))?
+        .to_lowercase();
+    let issuer_host = url::Url::parse(issuer)
+        .map_err(|e| format!("Invalid issuer URL: {e}"))?
+        .host_str()
+        .ok_or_else(|| format!("No host in issuer URL: {issuer}"))?
+        .to_lowercase();
+
+    if openid_config_host != issuer_host {
+        return Err(format!(
+            "Issuer host '{issuer_host}' does not match openid_configuration host '{openid_config_host}'"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+async fn fetch_ii_openid_configuration(url: String) -> Result<IIOpenIdConfiguration, String> {
+    use ic_cdk::api::management_canister::http_request::{
+        http_request_with_closure, CanisterHttpRequestArgument, HttpMethod,
+    };
+
+    let request = CanisterHttpRequestArgument {
+        url,
+        method: HttpMethod::GET,
+        body: None,
+        max_response_bytes: None,
+        transform: None,
+        headers: vec![
+            HttpHeader {
+                name: "Accept".into(),
+                value: "application/json".into(),
+            },
+            HttpHeader {
+                name: "User-Agent".into(),
+                value: "internet_identity_canister".into(),
+            },
+        ],
+    };
+
+    let (response,) =
+        http_request_with_closure(request, DISCOVERY_CALL_CYCLES, transform_discovery)
+            .await
+            .map_err(|(_, err)| err)?;
+
+    serde_json::from_slice::<IIOpenIdConfiguration>(response.body.as_slice())
+        .map_err(|_| "Invalid ii-openid-configuration JSON".into())
+}
+
+#[cfg(not(test))]
+async fn fetch_discovery(discovery_url: String) -> Result<DiscoveryDocument, String> {
+    use ic_cdk::api::management_canister::http_request::{
+        http_request_with_closure, CanisterHttpRequestArgument, HttpMethod,
+    };
+
+    let request = CanisterHttpRequestArgument {
+        url: discovery_url,
+        method: HttpMethod::GET,
+        body: None,
+        max_response_bytes: None,
+        transform: None,
+        headers: vec![
+            HttpHeader {
+                name: "Accept".into(),
+                value: "application/json".into(),
+            },
+            HttpHeader {
+                name: "User-Agent".into(),
+                value: "internet_identity_canister".into(),
+            },
+        ],
+    };
+
+    let (response,) =
+        http_request_with_closure(request, DISCOVERY_CALL_CYCLES, transform_discovery)
+            .await
+            .map_err(|(_, err)| err)?;
+
+    serde_json::from_slice::<DiscoveryDocument>(response.body.as_slice())
+        .map_err(|_| "Invalid discovery JSON".into())
+}
+
+/// Transform function for JSON discovery responses (both hops).
+/// Re-serializes deterministically for consensus across subnet nodes.
+#[cfg(not(test))]
+#[allow(clippy::needless_pass_by_value)]
+fn transform_discovery(response: HttpResponse) -> HttpResponse {
+    if response.status != HTTP_STATUS_OK {
+        return HttpResponse {
+            status: response.status,
+            headers: vec![],
+            body: b"Invalid discovery response status".to_vec(),
+        };
+    }
+
+    let Ok(doc) = serde_json::from_slice::<serde_json::Value>(response.body.as_slice()) else {
+        return HttpResponse {
+            status: Nat::from(HTTP_STATUS_OK),
+            headers: vec![],
+            body: b"Invalid discovery JSON".to_vec(),
+        };
+    };
+
+    let Ok(body) = serde_json::to_vec(&doc) else {
+        return HttpResponse {
+            status: Nat::from(HTTP_STATUS_OK),
+            headers: vec![],
+            body: b"Failed to re-serialize discovery JSON".to_vec(),
+        };
+    };
+
+    HttpResponse {
+        status: Nat::from(HTTP_STATUS_OK),
+        headers: vec![],
+        body,
+    }
+}
+
+/// II-specific SSO indirection document served at `{domain}/.well-known/ii-openid-configuration`.
+#[cfg(not(test))]
+#[derive(serde::Deserialize, Clone)]
+struct IIOpenIdConfiguration {
+    client_id: String,
+    openid_configuration: String,
+}
+
+/// OIDC discovery document — only the fields needed by the backend.
+#[cfg(not(test))]
+#[derive(serde::Deserialize, Clone)]
+struct DiscoveryDocument {
+    issuer: String,
+    jwks_uri: String,
+}
+
+/// Returns the discovered state for a given `discovery_domain`.
+/// Returns `(client_id, openid_configuration, issuer)` — any entry may be `None`
+/// if discovery for that domain has not yet completed.
+pub fn discovered_state_for(
+    discovery_domain: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
+    DISCOVERY_TASKS.with_borrow(|tasks| {
+        tasks
+            .iter()
+            .find(|t| t.discovery_domain == discovery_domain)
+            .map(|t| {
+                (
+                    t.client_id_ref.borrow().clone(),
+                    t.openid_configuration_ref.borrow().clone(),
+                    t.issuer_ref.borrow().clone(),
+                )
+            })
+            .unwrap_or((None, None, None))
+    })
 }
 
 fn compute_next_certs_fetch_delay<T, E>(
@@ -402,11 +847,10 @@ fn verify_claims(
             claims.iss
         )));
     }
-    if claims.aud != client_id {
-        return Err(OpenIDJWTVerificationError::GenericError(format!(
-            "Invalid audience: {}",
-            claims.aud
-        )));
+    if !claims.aud.matches(client_id) {
+        return Err(OpenIDJWTVerificationError::GenericError(
+            "Invalid audience".to_string(),
+        ));
     }
     if claims.nonce != expected_nonce {
         return Err(OpenIDJWTVerificationError::GenericError(format!(
@@ -502,6 +946,9 @@ fn should_transform_certs_to_same() {
 }
 
 #[cfg(test)]
+const TEST_AUD: &str = "45431994619-cbbfgtn7o0pp0dpfcg2l66bc4rcg7qbu.apps.googleusercontent.com";
+
+#[cfg(test)]
 fn test_data() -> (String, [u8; 32], OpenIdConfig, Claims) {
     // This JWT is for testing purposes, it's already been expired before this commit has been made,
     // additionally the audience of this JWT is a test Google client registration, not production.
@@ -518,7 +965,7 @@ fn test_data() -> (String, [u8; 32], OpenIdConfig, Claims) {
         name: "Google".to_string(),
         logo: String::new(),
         issuer: claims.iss.clone(),
-        client_id: claims.aud.clone(),
+        client_id: TEST_AUD.into(),
         jwks_uri: "https://www.googleapis.com/oauth2/v3/certs".to_string(),
         auth_uri: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
         auth_scope: vec!["openid".into(), "profile".into(), "email".into()],
@@ -536,7 +983,7 @@ fn should_return_credential() {
     let credential = OpenIdCredential {
         iss: claims.iss,
         sub: claims.sub,
-        aud: claims.aud,
+        aud: TEST_AUD.into(),
         last_usage_timestamp: None,
         metadata: HashMap::from([
             (
@@ -619,14 +1066,39 @@ fn should_return_error_when_invalid_issuer() {
 fn should_return_error_when_invalid_audience() {
     let (_, salt, config, claims) = test_data();
     let mut invalid_claims = claims;
-    invalid_claims.aud = "invalid-audience".into();
+    invalid_claims.aud = AudClaim::Single("invalid-audience".into());
 
     assert_eq!(
         verify_claims(&config.issuer, &config.client_id, &invalid_claims, &salt),
-        Err(OpenIDJWTVerificationError::GenericError(format!(
-            "Invalid audience: {}",
-            invalid_claims.aud
-        )))
+        Err(OpenIDJWTVerificationError::GenericError(
+            "Invalid audience".into()
+        ))
+    );
+}
+
+#[test]
+fn should_accept_client_id_in_aud_array() {
+    let (_, salt, config, claims) = test_data();
+    let mut multi_aud = claims;
+    multi_aud.aud = AudClaim::Multiple(vec!["some-other-aud".into(), TEST_AUD.into()]);
+
+    assert_eq!(
+        verify_claims(&config.issuer, &config.client_id, &multi_aud, &salt),
+        Ok(())
+    );
+}
+
+#[test]
+fn should_reject_aud_array_without_client_id() {
+    let (_, salt, config, claims) = test_data();
+    let mut multi_aud = claims;
+    multi_aud.aud = AudClaim::Multiple(vec!["a".into(), "b".into()]);
+
+    assert_eq!(
+        verify_claims(&config.issuer, &config.client_id, &multi_aud, &salt),
+        Err(OpenIDJWTVerificationError::GenericError(
+            "Invalid audience".into()
+        ))
     );
 }
 

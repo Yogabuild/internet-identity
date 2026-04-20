@@ -237,12 +237,14 @@ pub struct InternetIdentityFrontendArgs {
 #[derive(Clone, Debug, CandidType, Deserialize, Default, Eq, PartialEq)]
 pub struct InternetIdentitySynchronizedConfig {
     pub openid_configs: Option<Vec<OpenIdConfig>>,
+    pub oidc_configs: Option<Vec<DiscoverableOidcConfig>>,
 }
 
 impl From<&InternetIdentityInit> for InternetIdentitySynchronizedConfig {
     fn from(value: &InternetIdentityInit) -> Self {
         Self {
             openid_configs: value.openid_configs.clone(),
+            oidc_configs: value.oidc_configs.clone(),
         }
     }
 }
@@ -264,6 +266,9 @@ pub struct InternetIdentityInit {
     pub related_origins: Option<Vec<String>>,
     pub new_flow_origins: Option<Vec<String>>,
     pub openid_configs: Option<Vec<OpenIdConfig>>,
+    /// SSO provider configs managed via `add_discoverable_oidc_config` update call.
+    /// Retained in init args for backward compatibility and `config()` query output.
+    pub oidc_configs: Option<Vec<DiscoverableOidcConfig>>,
     pub analytics_config: Option<Option<AnalyticsConfig>>,
     pub enable_dapps_explorer: Option<bool>,
     pub is_production: Option<bool>,
@@ -378,6 +383,27 @@ pub struct OpenIdConfig {
     pub auth_scope: Vec<String>,
     pub fedcm_uri: Option<String>,
     pub email_verification: Option<OpenIdEmailVerificationScheme>,
+}
+
+/// SSO provider configuration that uses two-hop discovery.
+///
+/// The backend fetches `https://{discovery_domain}/.well-known/ii-openid-configuration`
+/// to obtain `{ client_id, openid_configuration }`, then fetches the standard OIDC
+/// discovery document at `openid_configuration` to resolve `issuer` and `jwks_uri`.
+#[derive(Clone, Debug, CandidType, Serialize, Deserialize, Default, Eq, PartialEq)]
+pub struct DiscoverableOidcConfig {
+    pub discovery_domain: String,
+}
+
+/// Resolved SSO provider state returned by the `discovered_oidc_configs` query.
+/// Any field other than `discovery_domain` is `None` until the two-hop discovery
+/// completes for that domain.
+#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+pub struct OidcConfig {
+    pub discovery_domain: String,
+    pub client_id: Option<String>,
+    pub openid_configuration: Option<String>,
+    pub issuer: Option<String>,
 }
 
 pub enum AuthorizationKey {

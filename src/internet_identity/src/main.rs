@@ -550,6 +550,16 @@ fn stats() -> InternetIdentityStats {
 }
 
 #[query]
+fn discovered_oidc_configs() -> Vec<OidcConfig> {
+    openid::get_discovered_oidc_configs()
+}
+
+#[update]
+fn add_discoverable_oidc_config(config: DiscoverableOidcConfig) {
+    openid::add_oidc_config(config);
+}
+
+#[query]
 fn config() -> InternetIdentityInit {
     let archive_config = match state::archive_state() {
         ArchiveState::NotConfigured => None,
@@ -568,6 +578,7 @@ fn config() -> InternetIdentityInit {
         related_origins: persistent_state.related_origins.clone(),
         new_flow_origins: persistent_state.new_flow_origins.clone(),
         openid_configs: persistent_state.openid_configs.clone(),
+        oidc_configs: persistent_state.oidc_configs.clone(),
         analytics_config: Some(persistent_state.analytics_config.clone()),
         enable_dapps_explorer: persistent_state.enable_dapps_explorer,
         is_production: persistent_state.is_production,
@@ -625,6 +636,9 @@ fn initialize(maybe_arg: Option<InternetIdentityInit>) {
     if let Some(openid_configs) = config.openid_configs {
         openid::setup(openid_configs);
     }
+    if let Some(oidc_configs) = config.oidc_configs {
+        openid::setup_oidc(oidc_configs);
+    }
 }
 
 fn apply_install_arg(maybe_arg: Option<InternetIdentityInit>) {
@@ -657,14 +671,14 @@ fn apply_install_arg(maybe_arg: Option<InternetIdentityInit>) {
                 persistent_state.related_origins = Some(related_origins);
             })
         }
-        if let Some(new_flow_origins) = arg.new_flow_origins {
-            state::persistent_state_mut(|persistent_state| {
-                persistent_state.new_flow_origins = Some(new_flow_origins);
-            })
-        }
         if let Some(openid_configs) = arg.openid_configs {
             state::persistent_state_mut(|persistent_state| {
                 persistent_state.openid_configs = Some(openid_configs);
+            })
+        }
+        if let Some(new_flow_origins) = arg.new_flow_origins {
+            state::persistent_state_mut(|persistent_state| {
+                persistent_state.new_flow_origins = Some(new_flow_origins);
             })
         }
         if let Some(analytics_config) = arg.analytics_config {
