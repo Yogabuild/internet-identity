@@ -1,10 +1,21 @@
 <script lang="ts">
   import type { LayoutProps } from "./$types";
-  import AuthorizationChannel from "$lib/components/utils/AuthorizationChannel.svelte";
+  import { channelErrorStore, channelStore } from "$lib/stores/channelStore";
+  import { goto } from "$app/navigation";
+  import ChannelError from "$lib/components/ui/ChannelError.svelte";
 
   const { children }: LayoutProps = $props();
+  channelStore.establish({ pending: true });
+
+  $effect(() => {
+    if ($channelErrorStore === "unsupported-browser") {
+      goto("/unsupported");
+    }
+  });
 </script>
 
-<AuthorizationChannel options={{ pending: true }}>
+{#if $channelErrorStore !== undefined && $channelErrorStore !== "unsupported-browser"}
+  <ChannelError error={$channelErrorStore} />
+{:else if $channelStore !== undefined}
   {@render children()}
-</AuthorizationChannel>
+{/if}

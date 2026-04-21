@@ -26,14 +26,8 @@ import {
   IdRegStartError,
   OpenIdDelegationError,
   OpenIdConfig,
-  MetadataMapV2,
 } from "$lib/generated/internet_identity_types";
-import {
-  requestJWT,
-  RequestConfig,
-  decodeJWT,
-  extractIssuerTemplateClaims,
-} from "$lib/utils/openID";
+import { requestJWT, RequestConfig, decodeJWT } from "$lib/utils/openID";
 import { nanosToMillis } from "$lib/utils/time";
 
 interface AuthFlowOptions {
@@ -202,15 +196,12 @@ export class AuthFlow {
       });
       const info =
         await get(authenticatedStore).actor.get_anchor_info(identityNumber);
-      const authnMethod = info.openid_credentials[0]?.find(
-        (method) => method.iss === iss,
-      );
       if (this.#options.trackLastUsed) {
         lastUsedIdentitiesStore.addLastUsedIdentity({
           identityNumber,
           name: info.name[0],
           authMethod: {
-            openid: { iss, sub, metadata: authnMethod?.metadata, loginHint },
+            openid: { iss, sub, loginHint },
           },
           createdAtMillis: info.created_at.map(nanosToMillis)[0],
         });
@@ -244,7 +235,7 @@ export class AuthFlow {
     }
     authenticationV2Funnel.trigger(AuthenticationV2Events.RegisterWithOpenID);
     await this.#startRegistration();
-    return this.#registerWithOpenId(this.#jwt, name, this.#configIssuer);
+    return this.#registerWithOpenId(this.#jwt, name);
   };
 
   #solveCaptcha = (image: string, attempt = 0): Promise<void> =>
@@ -370,11 +361,7 @@ export class AuthFlow {
     }
   };
 
-  #registerWithOpenId = async (
-    jwt: string,
-    name: string,
-    configIssuer: string,
-  ): Promise<bigint> => {
+  #registerWithOpenId = async (jwt: string, name: string): Promise<bigint> => {
     try {
       await get(sessionStore)
         .actor.openid_identity_registration_finish({
@@ -383,14 +370,7 @@ export class AuthFlow {
           name,
         })
         .then(throwCanisterError);
-      const {
-        iss,
-        sub,
-        loginHint,
-        name: jwtName,
-        email,
-        ...restJWTClaims
-      } = decodeJWT(jwt);
+      const { iss, sub, loginHint } = decodeJWT(jwt);
       const { identity, identityNumber } = await authenticateWithJWT({
         canisterId,
         session: get(sessionStore),
@@ -404,31 +384,11 @@ export class AuthFlow {
         identityNumber,
         authMethod: { openid: { iss, sub } },
       });
-      const metadata: MetadataMapV2 = [];
-      if (jwtName !== undefined) {
-        metadata.push(["name", { String: jwtName }]);
-      }
-      if (email !== undefined) {
-        metadata.push(["email", { String: email }]);
-      }
-      const claimKeys = extractIssuerTemplateClaims(configIssuer);
-      if (claimKeys !== undefined) {
-        claimKeys.forEach((key) => {
-          if (restJWTClaims[key] !== undefined) {
-            metadata.push([
-              key,
-              {
-                String: restJWTClaims[key],
-              },
-            ]);
-          }
-        });
-      }
       if (this.#options.trackLastUsed) {
         lastUsedIdentitiesStore.addLastUsedIdentity({
           identityNumber,
           name,
-          authMethod: { openid: { iss, sub, loginHint, metadata } },
+          authMethod: { openid: { iss, sub, loginHint } },
           createdAtMillis: Date.now(),
         });
       }
@@ -444,7 +404,7 @@ export class AuthFlow {
           await this.#solveCaptcha(
             `data:image/png;base64,${nextStep.CheckCaptcha.captcha_png_base64}`,
           );
-          return this.#registerWithOpenId(jwt, name, configIssuer);
+          return this.#registerWithOpenId(jwt, name);
         }
       }
       throw error;
