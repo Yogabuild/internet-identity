@@ -7,7 +7,7 @@ use ic_canister_sig_creation::extract_raw_canister_sig_pk_from_der;
 use internet_identity_interface::internet_identity::types::attributes::{
     AttributeSpec, CertifiedAttribute, CertifiedAttributes, GetAttributesRequest,
     GetIcrc3AttributeError, GetIcrc3AttributeRequest, ListAvailableAttributesRequest,
-    PrepareAttributeRequest, PrepareIcrc3AttributeRequest,
+    PrepareAttributeRequest, PrepareIcrc3AttributeError, PrepareIcrc3AttributeRequest,
 };
 use internet_identity_interface::internet_identity::types::{
     GetDelegationResponse, OpenIdConfig, SignedDelegation,
@@ -696,27 +696,28 @@ fn should_certify_icrc3_attributes_mixed_omit_scope() {
                 Icrc3Value::Blob(nonce.clone()),
                 "Nonce value in certified message does not match the provided nonce"
             );
-            // origin should be included
+            // origin should be included as Text
             let origin_entry = entries
                 .iter()
                 .find(|(k, _)| k == "implicit:origin")
                 .expect("Expected 'implicit:origin' key in message map");
             assert_eq!(
                 origin_entry.1,
-                Icrc3Value::Blob(origin.as_bytes().to_vec()),
+                Icrc3Value::Text(origin.to_string()),
                 "Origin value does not match"
             );
-            // issued_at_timestamp_ns should fall within the time window of the call
+            // issued_at_timestamp_ns should be a Nat within the time window of the call
             let timestamp_entry = entries
                 .iter()
                 .find(|(k, _)| k == "implicit:issued_at_timestamp_ns")
                 .expect("Expected 'implicit:issued_at_timestamp_ns' key in message map");
             match &timestamp_entry.1 {
-                Icrc3Value::Blob(bytes) => {
-                    let ts: u64 = std::str::from_utf8(bytes)
-                        .expect("timestamp should be valid UTF-8")
-                        .parse()
-                        .expect("timestamp should be a valid u64");
+                Icrc3Value::Nat(nat) => {
+                    let ts: u64 = nat
+                        .0
+                        .clone()
+                        .try_into()
+                        .expect("timestamp should fit in u64");
                     assert!(
                         ts >= time_before && ts <= time_after,
                         "Timestamp {} should be between {} and {}",
@@ -725,7 +726,7 @@ fn should_certify_icrc3_attributes_mixed_omit_scope() {
                         time_after
                     );
                 }
-                other => panic!("Expected Blob for timestamp, got {:?}", other),
+                other => panic!("Expected Nat for timestamp, got {:?}", other),
             }
         }
         other => panic!("Expected Map, got {:?}", other),
@@ -841,4 +842,57 @@ fn should_list_all_available_attributes() {
         "Expected at least 2 attributes, got {}",
         result.len()
     );
+}
+
+#[test]
+fn should_return_error_for_unavailable_icrc3_attributes() {
+    let (env, canister_id, principal, identity_number) = setup_icrc3_test_env();
+    let origin = "https://some-dapp.com";
+
+    // Request unavailable verified_email and unknown issuer alongside available email
+    let prepare_request = PrepareIcrc3AttributeRequest {
+        identity_number,
+        origin: origin.to_string(),
+        account_number: None,
+        attributes: vec![
+            AttributeSpec {
+                key: "openid:https://accounts.google.com:email".into(),
+                value: None,
+                omit_scope: false,
+            },
+            // The test user has no verified_email
+            AttributeSpec {
+                key: "openid:https://accounts.google.com:verified_email".into(),
+                value: None,
+                omit_scope: false,
+            },
+            // Unknown issuer
+            AttributeSpec {
+                key: "openid:https://unknown-issuer.com:email".into(),
+                value: None,
+                omit_scope: false,
+            },
+        ],
+        nonce: vec![0u8; 32],
+    };
+
+    let result = api::prepare_icrc3_attributes(&env, canister_id, principal, prepare_request)
+        .expect("failed to call prepare_icrc3_attributes");
+
+    match result {
+        Err(PrepareIcrc3AttributeError::AttributeMismatch { problems }) => {
+            assert_eq!(problems.len(), 2, "Expected 2 problems, got {:?}", problems);
+            assert!(
+                problems.iter().any(|p| p.contains("verified_email")),
+                "Expected a problem about verified_email, got {:?}",
+                problems
+            );
+            assert!(
+                problems.iter().any(|p| p.contains("unknown-issuer.com")),
+                "Expected a problem about unknown issuer, got {:?}",
+                problems
+            );
+        }
+        other => panic!("Expected AttributeMismatch error, got {:?}", other),
+    }
 }

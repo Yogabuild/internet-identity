@@ -1,5 +1,6 @@
 import { Principal } from "@icp-sdk/core/principal";
 import { test as base, expect, type Page } from "@playwright/test";
+import { toBase64 } from "../utils";
 
 export type AuthorizeConfig = {
   testAppURL: string;
@@ -12,6 +13,7 @@ export type AuthorizeConfig = {
       openid?: string;
       attributes?: string[];
       useIcrc3Attributes?: boolean;
+      icrc3Nonce?: Uint8Array;
     }
 );
 
@@ -67,6 +69,14 @@ export const test = base.extend<{
         await testAppPage
           .getByRole("checkbox", { name: "Use ICRC-3 attributes:" })
           .setChecked(true);
+      }
+      if (
+        "icrc3Nonce" in authorizeConfig &&
+        authorizeConfig.icrc3Nonce !== undefined
+      ) {
+        await testAppPage
+          .getByRole("textbox", { name: "ICRC-3 nonce (base64):" })
+          .fill(toBase64(authorizeConfig.icrc3Nonce));
       }
       if (
         "attributes" in authorizeConfig &&
