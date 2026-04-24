@@ -22,14 +22,23 @@ msgstr "Pengguna {0}"
 msgid "{application} has moved to the new Internet Identity"
 msgstr "{application} telah pindah ke Internet Identity baru"
 
+msgid "{displayName} account"
+msgstr ""
+
+msgid "{domainInput} didn't serve /.well-known/ii-openid-configuration (HTTP {0}). The domain owner needs to publish it for II to sign you in."
+msgstr ""
+
+msgid "{domainInput}'s /.well-known/ii-openid-configuration is malformed: {0}"
+msgstr ""
+
+msgid "{domainInput}'s /.well-known/ii-openid-configuration is malformed."
+msgstr ""
+
 msgid "{identityName} has been removed from this device."
 msgstr "{identityName} telah dihapus dari perangkat ini."
 
 msgid "{MAX_ACCOUNTS, plural, one {You have reached the maximum of # account for a single app.} other {You have reached the maximum of # accounts for a single app.}}"
 msgstr "{MAX_ACCOUNTS, plural, other {Anda telah mencapai batas maksimum # akun untuk satu aplikasi.}}"
-
-msgid "{name} account"
-msgstr "Akun {name}"
 
 msgid "{num, plural, one {# Passkey} other {# Passkeys}}"
 msgstr "{num, plural, other {# Passkey}}"
@@ -112,6 +121,9 @@ msgstr "Karena Anda saat ini masuk dengan Akun ini, Anda akan keluar."
 msgid "As you are currently signed in with this passkey, you will be signed out."
 msgstr "Karena Anda saat ini masuk dengan passkey ini, Anda akan keluar."
 
+msgid "Attribute sharing failed"
+msgstr ""
+
 msgid "Authenticating..."
 msgstr "Mengautentikasi..."
 
@@ -123,6 +135,9 @@ msgstr "Autentikasi berhasil"
 
 msgid "Authorize new device"
 msgstr "Otorisasi perangkat baru"
+
+msgid "Back to sign-in options"
+msgstr ""
 
 msgid "Before getting started, find a private place and have your recovery phrase ready. Keep it confidential to protect your identity."
 msgstr "Sebelum memulai, cari tempat yang privat dan siapkan frasa pemulihan Anda. Jaga kerahasiaannya untuk melindungi identitas Anda."
@@ -154,6 +169,9 @@ msgstr "Memeriksa frasa pemulihan"
 msgid "Checking your order"
 msgstr "Memeriksa pesanan Anda"
 
+msgid "Checking..."
+msgstr ""
+
 msgid "Choose an account"
 msgstr "Pilih akun"
 
@@ -180,6 +198,12 @@ msgstr "Tutup menu"
 
 msgid "Code copied to clipboard"
 msgstr "Kode disalin ke papan klip"
+
+msgid "Company domain"
+msgstr ""
+
+msgid "company.domain.com"
+msgstr ""
 
 msgid "Complete set-up"
 msgstr "Selesaikan penyiapan"
@@ -216,6 +240,9 @@ msgstr "Lanjutkan dengan {name}"
 
 msgid "Continue with passkey"
 msgstr "Lanjutkan dengan passkey"
+
+msgid "Couldn't reach {domainInput}. Check the spelling and your network, then try again."
+msgstr ""
 
 msgid "Create account"
 msgstr "Buat akun"
@@ -294,6 +321,9 @@ msgstr "Masukkan setiap kata dalam urutan yang benar:"
 
 msgid "Enter recovery phrase"
 msgstr "Masukkan frasa pemulihan"
+
+msgid "Enter your company domain"
+msgstr ""
 
 msgid "Everything you need to know about Internet Identity, your private, secure, and easy way to log in to apps on the Internet Computer."
 msgstr "Semua yang perlu Anda ketahui tentang Internet Identity, cara yang pribadi, aman, dan mudah untuk masuk ke aplikasi di Internet Computer."
@@ -463,6 +493,9 @@ msgstr "Tautan kode tidak valid"
 
 msgid "Invalid code. Please check and try again."
 msgstr "Kode tidak valid. Silakan periksa dan coba lagi."
+
+msgid "Invalid domain"
+msgstr ""
 
 msgid "Invalid recovery phrase"
 msgstr "Frasa pemulihan tidak valid"
@@ -704,9 +737,6 @@ msgstr "Frasa pemulihan tidak terverifikasi"
 msgid "Recovery phrase set"
 msgstr "Frasa pemulihan diatur"
 
-msgid "Redirecting to the app"
-msgstr "Mengalihkan ke aplikasi..."
-
 msgid "Remove"
 msgstr "Hapus"
 
@@ -800,6 +830,9 @@ msgstr "Sesi telah habis"
 msgid "Set as default sign-in"
 msgstr "Atur sebagai metode masuk default"
 
+msgid "Several SSO sign-ins are in flight already. Wait a moment and try again."
+msgstr ""
+
 msgid "Show all"
 msgstr "Tampilkan semua"
 
@@ -818,8 +851,14 @@ msgstr "Masuk menggunakan metode yang dikenal"
 msgid "Sign in with another identity"
 msgstr "Masuk dengan identitas lain"
 
-msgid "Sign in with your {name} account from any device."
-msgstr "Masuk dengan akun {name} Anda dari perangkat mana pun."
+msgid "Sign in with SSO"
+msgstr ""
+
+msgid "Sign In With SSO"
+msgstr ""
+
+msgid "Sign in with your {displayName} account from any device."
+msgstr ""
 
 msgid "Sign out"
 msgstr "Keluar"
@@ -855,8 +894,35 @@ msgstr "Ada yang salah!"
 msgid "Something went wrong while creating your delegation. Please try again; if the issue persists, contact support."
 msgstr ""
 
+msgid "Something went wrong while sharing attributes. Please try again; if the issue persists, contact support."
+msgstr ""
+
 msgid "Source code"
 msgstr "Kode sumber"
+
+msgid "SSO"
+msgstr ""
+
+msgid "SSO is not available for \"{domainInput}\" yet. Ask an II admin to register this domain."
+msgstr ""
+
+msgid "SSO provider misconfigured: authorization endpoint is not HTTPS. ({msg})"
+msgstr ""
+
+msgid "SSO provider misconfigured: authorization endpoint points to a different host than the issuer. ({msg})"
+msgstr ""
+
+msgid "SSO provider misconfigured: issuer doesn't match the configured hostname. ({msg})"
+msgstr ""
+
+msgid "SSO provider misconfigured: issuer URL is not HTTPS. ({msg})"
+msgstr ""
+
+msgid "SSO provider's discovery document is malformed: {msg}"
+msgstr ""
+
+msgid "SSO sign-in failed. Please try again."
+msgstr ""
 
 msgid "Start over"
 msgstr "Mulai ulang"
@@ -986,6 +1052,9 @@ msgstr "Untuk melanjutkan:"
 
 msgid "To finish setting up your passkey, follow the instructions shown on your <0>new device</0>."
 msgstr "Untuk menyelesaikan pengaturan passkey Anda, ikuti instruksi yang ditampilkan di <0>perangkat baru</0> Anda."
+
+msgid "Too many recent attempts for {domainInput}. Wait a few minutes and try again."
+msgstr ""
 
 msgid "Type each word in the correct order:"
 msgstr "Ketik setiap kata dalam urutan yang benar:"

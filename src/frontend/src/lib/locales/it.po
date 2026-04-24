@@ -22,14 +22,23 @@ msgstr "Utente {0}"
 msgid "{application} has moved to the new Internet Identity"
 msgstr "{application} si è spostata sulla nuova Internet Identity"
 
+msgid "{displayName} account"
+msgstr ""
+
+msgid "{domainInput} didn't serve /.well-known/ii-openid-configuration (HTTP {0}). The domain owner needs to publish it for II to sign you in."
+msgstr ""
+
+msgid "{domainInput}'s /.well-known/ii-openid-configuration is malformed: {0}"
+msgstr ""
+
+msgid "{domainInput}'s /.well-known/ii-openid-configuration is malformed."
+msgstr ""
+
 msgid "{identityName} has been removed from this device."
 msgstr "{identityName} è stata rimossa da questo dispositivo."
 
 msgid "{MAX_ACCOUNTS, plural, one {You have reached the maximum of # account for a single app.} other {You have reached the maximum of # accounts for a single app.}}"
 msgstr "{MAX_ACCOUNTS, plural, one {Hai raggiunto il limite massimo di # account per una singola app.} other {Hai raggiunto il limite massimo di # account per una singola app.}}"
-
-msgid "{name} account"
-msgstr "Account {name}"
 
 msgid "{num, plural, one {# Passkey} other {# Passkeys}}"
 msgstr "{num, plural, one {# passkey} other {# passkey}}"
@@ -112,6 +121,9 @@ msgstr "Poiché sei attualmente connesso con questo account, verrai disconnesso.
 msgid "As you are currently signed in with this passkey, you will be signed out."
 msgstr "Poiché sei attualmente connesso con questa passkey, verrai disconnesso."
 
+msgid "Attribute sharing failed"
+msgstr ""
+
 msgid "Authenticating..."
 msgstr "Autenticazione in corso..."
 
@@ -123,6 +135,9 @@ msgstr "Autenticazione riuscita"
 
 msgid "Authorize new device"
 msgstr "Autorizza nuovo dispositivo"
+
+msgid "Back to sign-in options"
+msgstr ""
 
 msgid "Before getting started, find a private place and have your recovery phrase ready. Keep it confidential to protect your identity."
 msgstr "Prima di iniziare, trova un posto riservato e tieni pronta la tua frase di recupero. Mantienila nascosta per proteggere la tua identità."
@@ -154,6 +169,9 @@ msgstr "Verifica della frase di recupero in corso"
 msgid "Checking your order"
 msgstr "Verifica del tuo ordine in corso"
 
+msgid "Checking..."
+msgstr ""
+
 msgid "Choose an account"
 msgstr "Scegli un account"
 
@@ -180,6 +198,12 @@ msgstr "Chiudi menu"
 
 msgid "Code copied to clipboard"
 msgstr "Codice copiato negli appunti"
+
+msgid "Company domain"
+msgstr ""
+
+msgid "company.domain.com"
+msgstr ""
 
 msgid "Complete set-up"
 msgstr "Completa la configurazione"
@@ -216,6 +240,9 @@ msgstr "Continua con {name}"
 
 msgid "Continue with passkey"
 msgstr "Continua con passkey"
+
+msgid "Couldn't reach {domainInput}. Check the spelling and your network, then try again."
+msgstr ""
 
 msgid "Create account"
 msgstr "Crea account"
@@ -294,6 +321,9 @@ msgstr "Inserisci ogni parola nell'ordine corretto:"
 
 msgid "Enter recovery phrase"
 msgstr "Inserisci la frase di recupero"
+
+msgid "Enter your company domain"
+msgstr ""
 
 msgid "Everything you need to know about Internet Identity, your private, secure, and easy way to log in to apps on the Internet Computer."
 msgstr "Tutto ciò che devi sapere su Internet Identity: il metodo privato, sicuro e facile per accedere alle app su Internet Computer."
@@ -463,6 +493,9 @@ msgstr "Link del codice non valido"
 
 msgid "Invalid code. Please check and try again."
 msgstr "Codice non valido. Controlla e riprova."
+
+msgid "Invalid domain"
+msgstr ""
 
 msgid "Invalid recovery phrase"
 msgstr "Frase di recupero non valida"
@@ -704,9 +737,6 @@ msgstr "Frase di recupero non verificata"
 msgid "Recovery phrase set"
 msgstr "Frase di recupero impostata"
 
-msgid "Redirecting to the app"
-msgstr "Reindirizzamento all'app"
-
 msgid "Remove"
 msgstr "Rimuovi"
 
@@ -800,6 +830,9 @@ msgstr "Sessione scaduta"
 msgid "Set as default sign-in"
 msgstr "Imposta come accesso predefinito"
 
+msgid "Several SSO sign-ins are in flight already. Wait a moment and try again."
+msgstr ""
+
 msgid "Show all"
 msgstr "Mostra tutto"
 
@@ -818,8 +851,14 @@ msgstr "Accedi utilizzando metodi familiari"
 msgid "Sign in with another identity"
 msgstr "Accedi con un'altra identità"
 
-msgid "Sign in with your {name} account from any device."
-msgstr "Accedi con il tuo account {name} da qualsiasi dispositivo."
+msgid "Sign in with SSO"
+msgstr ""
+
+msgid "Sign In With SSO"
+msgstr ""
+
+msgid "Sign in with your {displayName} account from any device."
+msgstr ""
 
 msgid "Sign out"
 msgstr "Esci"
@@ -855,8 +894,35 @@ msgstr "Qualcosa non è corretto!"
 msgid "Something went wrong while creating your delegation. Please try again; if the issue persists, contact support."
 msgstr ""
 
+msgid "Something went wrong while sharing attributes. Please try again; if the issue persists, contact support."
+msgstr ""
+
 msgid "Source code"
 msgstr "Codice sorgente"
+
+msgid "SSO"
+msgstr ""
+
+msgid "SSO is not available for \"{domainInput}\" yet. Ask an II admin to register this domain."
+msgstr ""
+
+msgid "SSO provider misconfigured: authorization endpoint is not HTTPS. ({msg})"
+msgstr ""
+
+msgid "SSO provider misconfigured: authorization endpoint points to a different host than the issuer. ({msg})"
+msgstr ""
+
+msgid "SSO provider misconfigured: issuer doesn't match the configured hostname. ({msg})"
+msgstr ""
+
+msgid "SSO provider misconfigured: issuer URL is not HTTPS. ({msg})"
+msgstr ""
+
+msgid "SSO provider's discovery document is malformed: {msg}"
+msgstr ""
+
+msgid "SSO sign-in failed. Please try again."
+msgstr ""
 
 msgid "Start over"
 msgstr "Inizia da capo"
@@ -986,6 +1052,9 @@ msgstr "Per continuare:"
 
 msgid "To finish setting up your passkey, follow the instructions shown on your <0>new device</0>."
 msgstr "Per terminare la configurazione della tua passkey, segui le istruzioni mostrate sul tuo <0>nuovo dispositivo</0>."
+
+msgid "Too many recent attempts for {domainInput}. Wait a few minutes and try again."
+msgstr ""
 
 msgid "Type each word in the correct order:"
 msgstr "Digita ogni parola nell'ordine corretto:"
