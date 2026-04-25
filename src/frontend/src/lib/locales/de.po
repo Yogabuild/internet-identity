@@ -22,6 +22,9 @@ msgstr "{0}-Benutzer"
 msgid "{application} has moved to the new Internet Identity"
 msgstr "{application} ist zur neuen Internet Identity umgezogen"
 
+msgid "{attribute}:"
+msgstr ""
+
 msgid "{displayName} account"
 msgstr ""
 
@@ -51,6 +54,15 @@ msgstr "{MAX_ACCOUNTS, plural, one {Sie haben das Maximum von # Konto für eine 
 
 msgid "{num, plural, one {# Passkey} other {# Passkeys}}"
 msgstr "{num, plural, one {# Passkey} other {# Passkeys}}"
+
+msgid "{providerName} {attribute}:"
+msgstr ""
+
+msgid "{providerName} email:"
+msgstr ""
+
+msgid "{providerName} name:"
+msgstr ""
 
 msgid "<0>Completely Redesigned Interface:</0> We've given Internet Identity a fresh, modern look and feel. The new design is intuitive and easier to navigate, ensuring a smoother user journey."
 msgstr "<0>Völlig überarbeitetes Interface:</0> Wir haben Internet Identity ein frisches, modernes Erscheinungsbild verliehen. Das neue Design ist intuitiv und einfacher zu bedienen, wodurch die Nutzerführung reibungsloser wird."
@@ -121,6 +133,9 @@ msgstr "Verwalten Sie die Anmeldemethoden Ihrer Identität."
 msgid "Advanced identity management"
 msgstr "Erweiterte Identitätsverwaltung"
 
+msgid "Allow to access this info"
+msgstr ""
+
 msgid "Are you sure?"
 msgstr "Sind Sie sicher?"
 
@@ -166,6 +181,9 @@ msgstr "Abbrechen"
 msgid "CAPTCHA characters"
 msgstr "CAPTCHA-Zeichen"
 
+msgid "Change"
+msgstr ""
+
 msgid "Characters are case-sensitive"
 msgstr "Groß- und Kleinschreibung beachten"
 
@@ -192,6 +210,9 @@ msgstr "Methode auswählen"
 
 msgid "Choose method to continue"
 msgstr "Methode wählen, um fortzufahren"
+
+msgid "Choose which details you'd like to share"
+msgstr ""
 
 msgid "Clear all"
 msgstr "Alle löschen"
@@ -298,6 +319,9 @@ msgstr "Es wurde bestätigt, dass Dashlane inkompatibel ist."
 msgid "Default"
 msgstr "Standard"
 
+msgid "Deny All"
+msgstr ""
+
 msgid "Discoverable passkeys"
 msgstr "Auffindbare Passkeys"
 
@@ -318,6 +342,9 @@ msgstr "{name} bearbeiten"
 
 msgid "Edit account"
 msgstr "Konto bearbeiten"
+
+msgid "Email:"
+msgstr ""
 
 msgid "Enable multiple accounts"
 msgstr "Mehrere Konten aktivieren"
@@ -575,6 +602,9 @@ msgstr "Limit erreicht"
 msgid "Link copied to clipboard"
 msgstr "Link in die Zwischenablage kopiert"
 
+msgid "Loading permissions"
+msgstr ""
+
 msgid "Locked legacy recovery phrase"
 msgstr "Gesperrte Legacy-Wiederherstellungsphrase"
 
@@ -637,6 +667,9 @@ msgstr "Konto benennen"
 
 msgid "Name your identity"
 msgstr "Benennen Sie Ihre Identität"
+
+msgid "Name:"
+msgstr ""
 
 msgid "No data is shared with Google, Microsoft or Apple on which applications you log in with Internet Identity."
 msgstr "Es werden keine Daten an Google, Microsoft oder Apple darüber weitergegeben, bei welchen Anwendungen Sie sich mit Internet Identity anmelden."
@@ -806,6 +839,9 @@ msgstr "Zurück zur App"
 msgid "Return to application"
 msgstr "Zur Anwendung zurückkehren"
 
+msgid "Review Permissions"
+msgstr ""
+
 msgid "Right now"
 msgstr "Jetzt gerade"
 
@@ -843,6 +879,9 @@ msgid "Set as default sign-in"
 msgstr "Als Standardanmeldung festlegen"
 
 msgid "Several SSO sign-ins are in flight already. Wait a moment."
+msgstr ""
+
+msgid "Share {label}"
 msgstr ""
 
 msgid "Show all"
