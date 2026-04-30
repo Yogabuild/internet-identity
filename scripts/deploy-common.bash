@@ -541,8 +541,15 @@ EOF
 }
 
 # -------------------------
-# icp install runner (honours DRY_RUN)
+# Wallet-proxied install runner (honours DRY_RUN)
 # -------------------------
+# Falls back to dfx for the actual upgrade because the staging canisters
+# are controlled by a dfx wallet (`cvthj-wyaaa-aaaad-aaaaq-cai`) that
+# routes via `wallet_call`. icp-cli's `--proxy` expects a custom proxy
+# canister exposing a `proxy` method instead, so pointing it at the
+# wallet trips `Canister has no update method 'proxy'`. See PR #3815
+# where the same pattern was applied to `make-upgrade-proposal`.
+#
 # Args: <canister_id> <wasm_path> <install_arg_candid_text>
 run_icp_install() {
     local canister_id="$1"
@@ -555,13 +562,13 @@ run_icp_install() {
     fi
 
     local cmd=(
-        icp canister
+        dfx canister
+            --network "$IC_NETWORK"
+            --wallet "$WALLET_CANISTER_ID"
             install "$canister_id"
-            -e "$IC_NETWORK"
-            --proxy "$WALLET_CANISTER_ID"
             --mode upgrade
             --wasm "$wasm_path"
-            --args "$install_arg"
+            --argument "$install_arg"
     )
 
     if [ "$DRY_RUN" = true ]; then
