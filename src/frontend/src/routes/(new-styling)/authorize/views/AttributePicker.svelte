@@ -1,34 +1,59 @@
 <script lang="ts">
-  import type { AvailableAttribute } from "$lib/stores/attributeConsent.store";
-  import { extractScope } from "$lib/stores/channelHandlers/attributes";
-  import { backendCanisterConfig } from "$lib/globals";
   import Checkbox from "$lib/components/ui/Checkbox.svelte";
   import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "@lucide/svelte";
   import { t } from "$lib/stores/locale.store";
 
+  /** One row in the picker. `value` is the user-visible string. The
+   *  optional `providerLabel` is shown as a secondary tag in the
+   *  dropdown when more than one option is available, helping the user
+   *  tell same-name values apart by their source. The parent resolves
+   *  it (canister-configured for OpenID, two-hop discovery for SSO,
+   *  bare issuer/domain otherwise) and passes the final string.
+   *  `id` is opaque to this component — used only as the `{#each}`
+   *  key so reordering / re-selection doesn't tear DOM nodes. */
+  export interface PickerOption {
+    id: string;
+    value: string;
+    providerLabel?: string;
+  }
+
   interface Props {
     label: string;
-    options: AvailableAttribute[];
+    options: PickerOption[];
     selectedIndex: number;
     checked: boolean;
     onCheck: (checked: boolean) => void;
     onSelect: (index: number) => void;
+    /** Widest label in the surrounding consent view, in pixels. The wrap
+     *  probe pads its label slot to this width so the row decides
+     *  "wraps?" against the same col 2 width the actual grid layout will
+     *  give it — independent of this row's own label length. */
+    maxLabelWidth: number;
   }
 
-  const { label, options, selectedIndex, checked, onCheck, onSelect }: Props =
-    $props();
+  const {
+    label,
+    options,
+    selectedIndex,
+    checked,
+    onCheck,
+    onSelect,
+    maxLabelWidth,
+  }: Props = $props();
 
   let isOpen = $state(false);
 
-  /** True when the value doesn't fit in col 3 and should move below the
-   *  label on its own row. Decided by an invisible probe span kept in col 3
-   *  row 1 regardless of layout state; we compare its natural text width
-   *  (scrollWidth) to the column's rendered width (clientWidth). A
-   *  ResizeObserver on the row keeps this reactive to viewport changes,
-   *  locale changes, and value changes. */
+  /** True when the row's `[checkbox] [label] [value] [chevron?]` content
+   *  doesn't fit on a single line and the value should drop to its own
+   *  row. The probe mirrors the actual row's chrome and stays
+   *  `whitespace-nowrap`, so its `scrollWidth` is the natural single-
+   *  line width. Comparing to its `clientWidth` (= the picker's content
+   *  width) gives a wrap decision that depends only on the picker's
+   *  outer width — never on col 2's auto-sizing inside the grid — so
+   *  toggling `wrapped` doesn't feed back into the column widths and
+   *  trigger oscillation. */
   let wrapped = $state(false);
-  let rowEl: HTMLDivElement | undefined = $state();
-  let probeEl: HTMLSpanElement | undefined = $state();
+  let probeEl: HTMLDivElement | undefined = $state();
 
   const checkWrap = (): void => {
     if (probeEl === undefined) return;
@@ -36,9 +61,9 @@
   };
 
   $effect(() => {
-    if (rowEl === undefined) return;
+    if (probeEl === undefined) return;
     const ro = new ResizeObserver(checkWrap);
-    ro.observe(rowEl);
+    ro.observe(probeEl);
     return () => ro.disconnect();
   });
 
@@ -47,20 +72,10 @@
   $effect(() => {
     // Track the reactive inputs that can change text width.
     void label;
-    void options[selectedIndex].displayValue;
+    void options[selectedIndex].value;
+    void maxLabelWidth;
     queueMicrotask(checkWrap);
   });
-
-  const getProviderName = (key: string): string | undefined => {
-    const scope = extractScope(key);
-    if (scope === undefined || !scope.startsWith("openid:")) {
-      return undefined;
-    }
-    const issuer = scope.slice("openid:".length);
-    return backendCanisterConfig.openid_configs[0]?.find(
-      (c) => c.issuer === issuer,
-    )?.name;
-  };
 
   /** Toggle the dropdown when the click landed on a non-interactive part of
    *  the row (i.e. not on the checkbox, chevron, or a dropdown option). The
@@ -75,11 +90,32 @@
 </script>
 
 <div
-  bind:this={rowEl}
-  class="border-border-secondary col-span-full grid min-w-0 grid-cols-subgrid overflow-hidden rounded-lg border"
+  class="border-border-secondary relative col-span-full grid min-w-0 grid-cols-subgrid overflow-hidden rounded-lg border"
   role="group"
   aria-label={label}
 >
+  <!-- Wrap-detection probe: absolutely-positioned, takes the picker's full
+       inner width, mirrors the row's chrome (checkbox + label + value
+       + optional chevron) on a single nowrap line. `scrollWidth > clientWidth`
+       means the natural line is wider than the picker, so the value should
+       drop to its own row. The probe lives outside the grid so its size is
+       independent of col-2's auto-sizing — toggling `wrapped` can't feed
+       back into the column widths. -->
+  <div
+    bind:this={probeEl}
+    aria-hidden="true"
+    class="pointer-events-none invisible absolute inset-x-0 top-0 flex h-0 items-center gap-x-3 overflow-hidden px-3 whitespace-nowrap"
+  >
+    <span class="size-4 shrink-0"></span>
+    <span class="shrink-0 text-sm" style:min-width="{maxLabelWidth}px"
+      >{label}</span
+    >
+    <span class="text-sm font-medium">{options[selectedIndex].value}</span>
+    {#if options.length > 1}
+      <span class="ms-auto size-6 shrink-0"></span>
+    {/if}
+  </div>
+
   <!-- Row-1 wrapper owns the hover/click, so the background doesn't bleed
        into the dropdown area below. Keyboard users toggle via the focusable
        chevron button; this click handler is mouse-only convenience. -->
@@ -99,22 +135,19 @@
       class="col-start-1 row-start-1 my-3 ms-3"
       aria-label={$t`Share ${label}`}
     />
-    <span class="text-text-secondary col-start-2 row-start-1 my-3 text-sm"
-      >{label}</span
-    >
-
-    <!-- Invisible probe: always sits in col 3 (matching the unwrapped value's
-         cell), so `probeEl.scrollWidth > probeEl.clientWidth` tells us
-         whether the value would overflow regardless of wrap state. -->
+    <!-- When this row's value drops to its own line, span the label across
+         cols 2-3 so it doesn't contribute to col-2's `auto`-sizing. Col 2
+         then sizes only from rows whose values fit on one line, and those
+         shorter rows can left-align their values right after their own
+         label. Safe from oscillation because the wrap probe above measures
+         independently of col-2 width. -->
     <span
-      bind:this={probeEl}
-      aria-hidden="true"
       class={[
-        "invisible col-start-3 row-start-1 h-0 overflow-hidden text-sm font-medium whitespace-nowrap",
-        options.length <= 1 && "col-span-2 me-3",
+        "text-text-secondary row-start-1 my-3 text-sm",
+        wrapped ? "col-span-2 col-start-2 me-3" : "col-start-2",
       ]}
     >
-      {options[selectedIndex].displayValue}
+      {label}
     </span>
 
     {#if !wrapped}
@@ -124,7 +157,7 @@
           options.length <= 1 && "col-span-2 me-3",
         ]}
       >
-        {options[selectedIndex].displayValue}
+        {options[selectedIndex].value}
       </span>
     {/if}
 
@@ -152,9 +185,9 @@
 
     {#if wrapped}
       <span
-        class="text-text-primary col-span-3 col-start-2 row-start-2 me-3 mb-3 text-sm font-medium break-all"
+        class="text-text-primary col-span-3 col-start-2 row-start-2 me-3 -mt-2 mb-3 text-sm font-medium break-all"
       >
-        {options[selectedIndex].displayValue}
+        {options[selectedIndex].value}
       </span>
     {/if}
   </div>
@@ -165,8 +198,7 @@
       role="listbox"
       aria-label={label}
     >
-      {#each options as option, index (option.key)}
-        {@const providerName = getProviderName(option.key)}
+      {#each options as option, index (option.id)}
         <button
           onclick={() => {
             onSelect(index);
@@ -182,11 +214,11 @@
           aria-selected={index === selectedIndex}
         >
           <span class="text-text-primary text-sm font-medium">
-            {option.displayValue}
+            {option.value}
           </span>
-          {#if providerName !== undefined}
+          {#if option.providerLabel !== undefined}
             <span class="text-text-tertiary text-sm">
-              {providerName}
+              {option.providerLabel}
             </span>
           {/if}
           {#if index === selectedIndex}
