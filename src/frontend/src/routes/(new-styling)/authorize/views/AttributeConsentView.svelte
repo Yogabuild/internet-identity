@@ -5,6 +5,7 @@
     AttributeGroup,
     AvailableAttribute,
   } from "$lib/stores/attributeConsent.store";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { extractScope } from "$lib/stores/channelHandlers/attributes";
   import { backendCanisterConfig } from "$lib/globals";
   import { discoverSsoConfig } from "$lib/utils/ssoDiscovery";
@@ -45,7 +46,13 @@
    * authenticated through some other method (passkey, direct OpenID),
    * so we can't rely on a name being threaded through from sign-in.
    */
-  let ssoNamesByDomain = $state<Map<string, string>>(new Map());
+  let ssoNamesByDomain = new SvelteMap<string, string>();
+  // Plain Set (not SvelteSet): non-reactive guard against duplicate
+  // in-flight `discoverSsoConfig` calls. `ensureSsoLookup` reads and
+  // writes this synchronously inside `getProviderName`, which itself
+  // runs during render — a reactive Set would write while a read is
+  // being tracked and break the consent view's initial render.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const ssoLookupsInFlight = new Set<string>();
 
   const ensureSsoLookup = (domain: string): void => {
@@ -56,12 +63,11 @@
     void discoverSsoConfig(domain)
       .then((result) => {
         if (result.name !== undefined && result.name.length > 0) {
-          ssoNamesByDomain = new Map(ssoNamesByDomain).set(domain, result.name);
+          ssoNamesByDomain.set(domain, result.name);
         }
       })
       .catch((error) => {
         // Non-fatal: the SSO label falls back to the bare domain.
-        // eslint-disable-next-line no-console
         console.error(`Failed to discover SSO name for ${domain}`, error);
       })
       .finally(() => {
@@ -105,7 +111,7 @@
       optionsByScope: Map<string | undefined, MergedOption>;
     }
   > => {
-    const result = new Map<
+    const result = new SvelteMap<
       string,
       {
         name: string;
@@ -148,7 +154,7 @@
     // a matching email group. We do this before iterating so that the
     // folded-in verified_email is skipped regardless of whether its entry
     // appears before or after the email entry in the request order.
-    const foldedVerifiedIds = new Set<string>();
+    const foldedVerifiedIds = new SvelteSet<string>();
     for (const entry of deduped.values()) {
       if (entry.name !== "email") continue;
       const verifiedId = groupId({
@@ -227,9 +233,9 @@
   let ready = $state(false);
 
   $effect(() => {
-    context.then((ctx) => {
+    void context.then((ctx) => {
       mergedGroups = mergeGroups(ctx.groups);
-      selections = new Map(
+      selections = new SvelteMap(
         mergedGroups.map((group) => [
           groupId(group),
           { checked: true, selectedIndex: 0 },
@@ -241,7 +247,7 @@
   });
 
   const handleDenyAll = () => {
-    selections = new Map(
+    selections = new SvelteMap(
       mergedGroups.map((group) => [
         groupId(group),
         { checked: false, selectedIndex: 0 },
@@ -352,14 +358,14 @@
             checked={selection.checked}
             onCheck={(checked) => {
               selections.set(id, { ...selection, checked });
-              selections = new Map(selections);
+              selections = new SvelteMap(selections);
             }}
             onSelect={(index) => {
               selections.set(id, {
                 ...selection,
                 selectedIndex: index,
               });
-              selections = new Map(selections);
+              selections = new SvelteMap(selections);
             }}
           />
         {/if}
